@@ -218,6 +218,20 @@ export default class NestProtect extends HomeKitDevice {
         this?.log?.info?.('Motion detected in "%s"', deviceData.description);
       }
 
+      // Diagnostic: log ambient motion event state so we can confirm whether Google
+      // is streaming AmbientMotionTrait events for this Protect device.
+      if (deviceData.ambient_motion_time !== undefined) {
+        this?.log?.debug?.(
+          '[%s] AmbientMotion event received — startMotion: %s, hold-off: %ds',
+          deviceData.description,
+          new Date(deviceData.ambient_motion_time * 1000).toISOString(),
+          deviceData.motion_holdoff_secs ?? 60,
+        );
+      } else if (typeof deviceData.motion_holdoff_secs === 'number') {
+        // motion_holdoff_secs is defined (Google connection) but no event has arrived yet
+        this?.log?.debug?.('[%s] Motion service active but no AmbientMotion events received from Google API yet', deviceData.description);
+      }
+
       // For Google accounts, motion comes from AmbientMotionTrait events (no "off" event exists).
       // When motion fires, start a countdown using maxHoldOff from the event (motion_holdoff_secs),
       // then manually clear the sensor. Each new event resets the timer.
@@ -683,6 +697,18 @@ const PROTECT_FIELD_MAP = {
       translate: ({ raw }) => {
         const secs = Number(raw?.value?.ambient_motion?.maxHoldOff?.seconds);
         return Number.isFinite(secs) && secs > 0 ? secs : 60;
+      },
+    },
+  },
+
+  ambient_motion_time: {
+    // Unix timestamp (seconds) of the most recent AmbientMotionTrait event from the Google API.
+    // Returns undefined if no event has ever been received for this device — used for diagnostics.
+    google: {
+      fields: ['ambient_motion'],
+      translate: ({ raw }) => {
+        const secs = Number(raw?.value?.ambient_motion?.startMotion?.seconds);
+        return Number.isFinite(secs) && secs > 0 ? secs : undefined;
       },
     },
   },
