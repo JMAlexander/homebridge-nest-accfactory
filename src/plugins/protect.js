@@ -570,17 +570,27 @@ const PROTECT_FIELD_MAP = {
   latest_alarm_test: {
     google: {
       fields: ['self_test'],
-      translate: ({ raw }) =>
-        Number.isFinite(Number(raw?.value?.self_test?.lastMstEnd?.seconds)) === true
-          ? Number(raw.value.self_test.lastMstEnd.seconds)
-          : undefined,
+      translate: ({ raw }) => {
+        // Capture both the manual Safety Check-Up (MST) end time and the
+        // automatic Sound Check (AST) end time, then return whichever is newer.
+        // This ensures Eve's lastalarmtest field reflects monthly AST runs too.
+        const mst = Number(raw?.value?.self_test?.lastMstEnd?.seconds);
+        const ast = Number(raw?.value?.self_test?.lastAstEnd?.seconds);
+        const times = [mst, ast].filter((n) => Number.isFinite(n) && n > 0);
+        return times.length > 0 ? Math.max(...times) : undefined;
+      },
     },
     nest: {
-      fields: ['latest_manual_test_end_utc_secs'],
-      translate: ({ raw }) =>
-        Number.isFinite(Number(raw?.value?.latest_manual_test_end_utc_secs)) === true
-          ? Number(raw.value.latest_manual_test_end_utc_secs)
-          : undefined,
+      // NOTE: The Nest REST account type is not used in this install (Google/issueToken is).
+      // 'last_audio_self_test_end_utc_secs' is the probable topaz-bucket field for AST end
+      // time — confirm with a live Nest API snapshot before relying on this path.
+      fields: ['latest_manual_test_end_utc_secs', 'last_audio_self_test_end_utc_secs'],
+      translate: ({ raw }) => {
+        const mst = Number(raw?.value?.latest_manual_test_end_utc_secs);
+        const ast = Number(raw?.value?.last_audio_self_test_end_utc_secs);
+        const times = [mst, ast].filter((n) => Number.isFinite(n) && n > 0);
+        return times.length > 0 ? Math.max(...times) : undefined;
+      },
     },
   },
 
