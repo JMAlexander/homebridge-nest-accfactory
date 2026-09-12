@@ -64,6 +64,7 @@ export default class NestProtect extends HomeKitDevice {
   batteryService = undefined;
   smokeService = undefined;
   motionService = undefined;
+  #motionClearTimer = undefined; // Auto-clear timer for event-based (Google AmbientMotion) motion detection
   carbonMonoxideService = undefined;
 
   // Class functions
@@ -114,6 +115,10 @@ export default class NestProtect extends HomeKitDevice {
   }
 
   onShutdown() {
+    // Cancel any pending motion auto-clear so the timer doesn't fire after shutdown
+    clearTimeout(this.#motionClearTimer);
+    this.#motionClearTimer = undefined;
+
     // Clear motion sensor on shutdown to prevent stale status in HomeKit after restart
     if (this.motionService !== undefined) {
       this.motionService.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
@@ -211,6 +216,20 @@ export default class NestProtect extends HomeKitDevice {
 
       if (this.deviceData?.logMotionEvents === true && deviceData?.detected_motion === true && this.deviceData?.detected_motion !== true) {
         this?.log?.info?.('Motion detected in "%s"', deviceData.description);
+      }
+
+      // For Google accounts, motion comes from AmbientMotionTrait events (no "off" event exists).
+      // When motion fires, start a countdown using maxHoldOff from the event (motion_holdoff_secs),
+      // then manually clear the sensor. Each new event resets the timer.
+      // motion_holdoff_secs is only populated for Google connections, so this block is Google-only.
+      if (deviceData.detected_motion === true && typeof deviceData.motion_holdoff_secs === 'number') {
+        clearTimeout(this.#motionClearTimer);
+        this.#motionClearTimer = setTimeout(() => {
+          this.#motionClearTimer = undefined;
+          this.deviceData.detected_motion = false;
+          this.motionService?.updateCharacteristic(this.hap.Characteristic.MotionDetected, false);
+          this?.log?.debug?.('Motion cleared after %ds hold-off in "%s"', deviceData.motion_holdoff_secs, deviceData.description);
+        }, deviceData.motion_holdoff_secs * 1000);
       }
 
       // Log motion to history only if changed to previous recording
@@ -643,13 +662,28 @@ const PROTECT_FIELD_MAP = {
 
   detected_motion: {
     google: {
-      fields: ['legacy_protect_device_info'],
-      translate: ({ raw }) =>
-        typeof raw?.value?.legacy_protect_device_info === 'object' ? raw.value.legacy_protect_device_info.autoAway !== true : false,
+      // AmbientMotionTrait fires an event with startMotion timestamp each time the PIR sensor
+      // triggers. There is no "off" event — motion_holdoff_secs drives the auto-clear timer
+      // in onUpdate(). Returns true whenever a motion event has been received.
+      fields: ['ambient_motion'],
+      translate: ({ raw }) => raw?.value?.ambient_motion?.startMotion !== undefined,
     },
     nest: {
       fields: ['auto_away'],
       translate: ({ raw }) => raw?.value?.auto_away === false,
+    },
+  },
+
+  motion_holdoff_secs: {
+    // How long (seconds) to keep MotionDetected = true after an AmbientMotionEvent.
+    // Read from the maxHoldOff field of the event itself; falls back to 60 seconds.
+    // Only defined for Google — Nest uses state-based auto_away so no timer is needed.
+    google: {
+      fields: ['ambient_motion'],
+      translate: ({ raw }) => {
+        const secs = Number(raw?.value?.ambient_motion?.maxHoldOff?.seconds);
+        return Number.isFinite(secs) && secs > 0 ? secs : 60;
+      },
     },
   },
 };
