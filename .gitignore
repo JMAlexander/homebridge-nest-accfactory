@@ -3,6 +3,7 @@ node_modules*
 non-github
 dist*
 .vscode
+.cursor
 # macOS junk
 .DS_Store
 **/.DS_Store
